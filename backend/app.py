@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import os
 import shutil
 import tempfile
@@ -17,22 +15,47 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+try:
+    from .rag import (
+        RAGChunkInput,
+        RAGRecordingInput,
+        RAGSource,
+        VoiceMemoRAG,
+    )
+except ImportError:
+    from rag import RAGChunkInput, RAGRecordingInput, RAGSource, VoiceMemoRAG
+
 load_dotenv()
 
 app = FastAPI(
     title="AI Voice Memo Agent",
-    version="1.0.0",
-    description="Transcription, structured analysis, semantic search, and agent tools.",
+    version="2.0.0",
+    description=(
+        "Transcription, structured analysis, persistent LangChain RAG, and agent tools."
+    ),
 )
 
 AGENT_MODEL = os.getenv("OPENAI_AGENT_MODEL", "gpt-5.4-mini")
 ANALYSIS_MODEL = os.getenv("OPENAI_ANALYSIS_MODEL", "gpt-5.4-mini")
 TRANSCRIPTION_MODEL = os.getenv(
     "OPENAI_TRANSCRIPTION_MODEL",
-    "gpt-4o-mini-transcribe",
+    "gpt-transcribe",
 )
 EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIMENSIONS = int(os.getenv("OPENAI_EMBEDDING_DIMENSIONS", "1536"))
 SEMANTIC_MIN_SCORE = float(os.getenv("SEMANTIC_MIN_SCORE", "0.20"))
+VECTOR_STORE_PROVIDER = os.getenv("VECTOR_STORE_PROVIDER", "chroma").strip().lower()
+POSTGRES_CONNECTION_STRING = (
+    os.getenv("POSTGRES_CONNECTION_STRING", "").strip()
+    or os.getenv("DATABASE_URL", "").strip()
+)
+RAG_COLLECTION_NAME = os.getenv(
+    "RAG_COLLECTION_NAME",
+    "voice_memo_transcript_chunks",
+).strip()
+RAG_DATA_DIRECTORY = Path(
+    os.getenv("RAG_DATA_DIRECTORY", str(Path(__file__).parent / "data" / "chroma"))
+)
 
 
 class ActionItem(BaseModel):
@@ -69,6 +92,7 @@ class AgentRecording(BaseModel):
     created_at: datetime
     duration: float
     transcript: Optional[str] = None
+    transcript_chunks: list[TranscriptChunk] = Field(default_factory=list)
     summary: Optional[str] = None
     key_points: list[str] = Field(default_factory=list)
     action_items: list[ActionItem] = Field(default_factory=list)
@@ -89,10 +113,23 @@ class SearchResult(BaseModel):
     title: str
     matched_text: str
     score: float
+    chunk_id: Optional[str] = None
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
 
 
 class SearchReply(BaseModel):
     results: list[SearchResult]
+
+
+class AgentSource(BaseModel):
+    recording_id: str
+    recording_title: str
+    chunk_id: str
+    excerpt: str
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    score: float
 
 
 class PendingAction(BaseModel):
@@ -113,6 +150,7 @@ class AgentAskRequest(BaseModel):
 class AgentReply(BaseModel):
     message: str
     recording_ids: list[str] = Field(default_factory=list)
+    sources: list[AgentSource] = Field(default_factory=list)
     requires_confirmation: bool = False
     pending_action: Optional[PendingAction] = None
 
@@ -144,8 +182,8 @@ class TagSuggestion(BaseModel):
 
 _sessions: dict[str, SessionState] = {}
 _sessions_lock = Lock()
-_embedding_cache: dict[str, list[float]] = {}
-_embedding_lock = Lock()
+_rag_service: Optional[VoiceMemoRAG] = None
+_rag_lock = Lock()
 
 
 def get_client() -> OpenAI:
@@ -156,6 +194,79 @@ def get_client() -> OpenAI:
             detail="OPENAI_API_KEY is not configured on the AI server.",
         )
     return OpenAI(api_key=api_key)
+
+
+def get_rag_service() -> VoiceMemoRAG:
+    global _rag_service
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY is not configured on the AI server.",
+        )
+    with _rag_lock:
+        if _rag_service is None:
+            try:
+                _rag_service = VoiceMemoRAG(
+                    persist_directory=RAG_DATA_DIRECTORY,
+                    vector_store_provider=VECTOR_STORE_PROVIDER,
+                    postgres_connection=POSTGRES_CONNECTION_STRING or None,
+                    collection_name=RAG_COLLECTION_NAME,
+                    api_key=api_key,
+                    embedding_model=EMBEDDING_MODEL,
+                    embedding_dimensions=EMBEDDING_DIMENSIONS,
+                    answer_model=AGENT_MODEL,
+                    min_score=SEMANTIC_MIN_SCORE,
+                )
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"The {VECTOR_STORE_PROVIDER} vector store is unavailable. "
+                        "Check the backend database configuration."
+                    ),
+                ) from error
+        return _rag_service
+
+
+def rag_recording(recording: AgentRecording) -> RAGRecordingInput:
+    return RAGRecordingInput(
+        id=recording.id,
+        title=recording.title,
+        transcript=recording.transcript,
+        duration=recording.duration,
+        created_at=recording.created_at.isoformat(),
+        chunks=[
+            RAGChunkInput(
+                id=chunk.id,
+                text=chunk.text,
+                start_time=chunk.start_time,
+                end_time=chunk.end_time,
+            )
+            for chunk in recording.transcript_chunks
+        ],
+        summary=recording.summary,
+        tags=recording.tags,
+        category=recording.category,
+    )
+
+
+def sync_rag(recordings: list[AgentRecording]) -> VoiceMemoRAG:
+    rag = get_rag_service()
+    rag.sync_recordings([rag_recording(recording) for recording in recordings])
+    return rag
+
+
+def agent_source(source: RAGSource) -> AgentSource:
+    return AgentSource(
+        recording_id=source.recording_id,
+        recording_title=source.recording_title,
+        chunk_id=source.chunk_id,
+        excerpt=source.text,
+        start_time=source.start_time,
+        end_time=source.end_time,
+        score=source.score,
+    )
 
 
 def split_text(text: str, size: int = 1_200, overlap: int = 150) -> list[str]:
@@ -269,81 +380,26 @@ def analyze_audio(audio_path: Path, duration: float) -> RecordingAnalysis:
     )
 
 
-def cosine_similarity(left: list[float], right: list[float]) -> float:
-    if not left or not right or len(left) != len(right):
-        return 0
-    dot = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0 or right_norm == 0:
-        return 0
-    return dot / (left_norm * right_norm)
-
-
-def embeddings_for(client: OpenAI, texts: list[str]) -> list[list[float]]:
-    results: list[Optional[list[float]]] = [None] * len(texts)
-    missing_texts: list[str] = []
-    missing_indexes: list[int] = []
-
-    with _embedding_lock:
-        for index, text in enumerate(texts):
-            key = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            cached = _embedding_cache.get(key)
-            if cached is None:
-                missing_texts.append(text)
-                missing_indexes.append(index)
-            else:
-                results[index] = cached
-
-    if missing_texts:
-        response = client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=missing_texts,
-            encoding_format="float",
-        )
-        with _embedding_lock:
-            for target_index, item, text in zip(
-                missing_indexes,
-                response.data,
-                missing_texts,
-            ):
-                vector = item.embedding
-                results[target_index] = vector
-                key = hashlib.sha256(text.encode("utf-8")).hexdigest()
-                _embedding_cache[key] = vector
-
-    return [vector or [] for vector in results]
-
-
 def semantic_search(request: SearchRequest) -> SearchReply:
     query = request.query.strip()
     if not query or not request.recordings:
         return SearchReply(results=[])
 
-    candidates: list[tuple[AgentRecording, str]] = []
-    for recording in request.recordings:
-        searchable = recording.transcript or recording.summary or " ".join(
-            [recording.title, *recording.tags]
-        )
-        for chunk in split_text(searchable):
-            candidates.append((recording, chunk))
-    if not candidates:
-        return SearchReply(results=[])
-
-    client = get_client()
-    vectors = embeddings_for(client, [query, *[item[1] for item in candidates]])
-    query_vector = vectors[0]
+    rag = sync_rag(request.recordings)
+    sources = rag.search(query, top_k=max(request.top_k * 3, request.top_k))
     best_by_recording: dict[str, SearchResult] = {}
 
-    for (recording, chunk), vector in zip(candidates, vectors[1:]):
-        score = cosine_similarity(query_vector, vector)
-        existing = best_by_recording.get(recording.id)
-        if existing is None or score > existing.score:
-            best_by_recording[recording.id] = SearchResult(
-                recording_id=recording.id,
-                title=recording.title,
-                matched_text=chunk,
-                score=round(score, 4),
+    for source in sources:
+        existing = best_by_recording.get(source.recording_id)
+        if existing is None or source.score > existing.score:
+            best_by_recording[source.recording_id] = SearchResult(
+                recording_id=source.recording_id,
+                title=source.recording_title,
+                matched_text=source.text,
+                score=source.score,
+                chunk_id=source.chunk_id,
+                start_time=source.start_time,
+                end_time=source.end_time,
             )
 
     ranked = sorted(
@@ -351,13 +407,7 @@ def semantic_search(request: SearchRequest) -> SearchReply:
         key=lambda result: result.score,
         reverse=True,
     )
-    return SearchReply(
-        results=[
-            result
-            for result in ranked
-            if result.score >= SEMANTIC_MIN_SCORE
-        ][: request.top_k]
-    )
+    return SearchReply(results=ranked[: request.top_k])
 
 
 def recording_by_id(
@@ -397,7 +447,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "search_recordings",
-        "description": "Semantic search over recording transcripts, summaries, titles, and tags.",
+        "description": "Find recordings and timestamped transcript passages relevant to a query.",
         "strict": True,
         "parameters": {
             "type": "object",
@@ -406,6 +456,29 @@ TOOLS: list[dict[str, Any]] = [
                 "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
             },
             "required": ["query", "top_k"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "answer_recording_question",
+        "description": (
+            "Answer a question by retrieving timestamped evidence from one or more "
+            "recordings. Use this for synthesis, comparisons, and factual questions "
+            "about transcript content. Pass an empty recording_ids list to search all."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
+                "recording_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["query", "top_k", "recording_ids"],
             "additionalProperties": False,
         },
     },
@@ -544,7 +617,7 @@ def execute_read_tool(
     arguments: dict[str, Any],
     recordings: list[AgentRecording],
     state: SessionState,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, Any], list[str], list[AgentSource]]:
     if name == "search_recordings":
         reply = semantic_search(
             SearchRequest(
@@ -556,19 +629,59 @@ def execute_read_tool(
         ids = [result.recording_id for result in reply.results]
         state.last_search_results = ids
         state.current_recording_id = ids[0] if ids else None
-        return reply.model_dump(), ids
+        sources = [
+            AgentSource(
+                recording_id=result.recording_id,
+                recording_title=result.title,
+                chunk_id=result.chunk_id or "chunk",
+                excerpt=result.matched_text,
+                start_time=result.start_time,
+                end_time=result.end_time,
+                score=result.score,
+            )
+            for result in reply.results
+        ]
+        return reply.model_dump(), ids, sources
+
+    if name == "answer_recording_question":
+        available_ids = {recording.id for recording in recordings}
+        requested_ids = [
+            recording_id
+            for recording_id in arguments["recording_ids"]
+            if recording_id in available_ids
+        ]
+        rag = sync_rag(recordings)
+        answer = rag.answer(
+            arguments["query"],
+            top_k=arguments["top_k"],
+            recording_ids=requested_ids or None,
+        )
+        sources = [agent_source(source) for source in answer.sources]
+        ids = list(dict.fromkeys(source.recording_id for source in sources))
+        state.last_search_results = ids
+        state.current_recording_id = ids[0] if ids else state.current_recording_id
+        return {
+            "answer": answer.answer,
+            "sources": [
+                {
+                    "label": f"S{index}",
+                    **source.model_dump(),
+                }
+                for index, source in enumerate(sources, start=1)
+            ],
+        }, ids, sources
 
     if name == "get_latest_recording":
         if not recordings:
-            return {"error": "No recordings exist."}, []
+            return {"error": "No recordings exist."}, [], []
         latest = max(recordings, key=lambda item: item.created_at)
         state.current_recording_id = latest.id
-        return {"recording_id": latest.id, "title": latest.title}, [latest.id]
+        return {"recording_id": latest.id, "title": latest.title}, [latest.id], []
 
     recording_id = arguments.get("recording_id", "")
     recording = recording_by_id(recordings, recording_id)
     if recording is None:
-        return {"error": "Recording not found."}, []
+        return {"error": "Recording not found."}, [], []
     state.current_recording_id = recording.id
 
     if name == "get_recording":
@@ -581,35 +694,35 @@ def execute_read_tool(
             "category": recording.category,
             "has_transcript": bool(recording.transcript),
             "has_summary": bool(recording.summary),
-        }, [recording.id]
+        }, [recording.id], []
     if name == "summarize_recording":
         if not recording.summary:
             return {
                 "error": "No cached summary is available. Ask the user to generate analysis first."
-            }, [recording.id]
+            }, [recording.id], []
         return {
             "recording_id": recording.id,
             "summary": recording.summary,
             "key_points": recording.key_points,
             "action_items": [item.model_dump() for item in recording.action_items],
-        }, [recording.id]
+        }, [recording.id], []
     if name == "get_transcript":
         if not recording.transcript:
-            return {"error": "No cached transcript is available."}, [recording.id]
+            return {"error": "No cached transcript is available."}, [recording.id], []
         return {
             "recording_id": recording.id,
             "transcript": recording.transcript,
-        }, [recording.id]
+        }, [recording.id], []
     if name == "extract_action_items":
         return {
             "recording_id": recording.id,
             "action_items": [item.model_dump() for item in recording.action_items],
-        }, [recording.id]
+        }, [recording.id], []
     if name == "suggest_title":
-        return {"suggested_title": suggest_title(client, recording)}, [recording.id]
+        return {"suggested_title": suggest_title(client, recording)}, [recording.id], []
     if name == "suggest_tags":
-        return {"tags": suggest_tags(client, recording)}, [recording.id]
-    return {"error": f"Unsupported tool: {name}"}, []
+        return {"tags": suggest_tags(client, recording)}, [recording.id], []
+    return {"error": f"Unsupported tool: {name}"}, [], []
 
 
 def prepare_pending_action(
@@ -672,10 +785,15 @@ def run_agent(request: AgentAskRequest) -> AgentReply:
     }
     input_items: list[Any] = [{"role": "user", "content": request.query}]
     last_recording_ids: list[str] = []
+    last_sources: list[AgentSource] = []
 
     instructions = (
         "You are the AI agent inside a voice memo app. Use tools for every claim "
         "about the user's recordings. Never invent recordings or transcript content. "
+        "Use answer_recording_question for questions that require transcript evidence, "
+        "cross-recording synthesis, or comparisons. Preserve its [S1] citation labels "
+        "in the final response. Use search_recordings when the user only wants to locate "
+        "relevant recordings. "
         "Cached summaries must be reused. For rename, tag, or delete requests, call "
         "the corresponding modification tool; the application will request confirmation. "
         "Resolve phrases such as 'the second one', 'it', and 'this recording' using "
@@ -696,7 +814,11 @@ def run_agent(request: AgentAskRequest) -> AgentReply:
             message = response.output_text.strip() or "I couldn't complete this request."
             with _sessions_lock:
                 _sessions[request.session_id] = state
-            return AgentReply(message=message, recording_ids=last_recording_ids)
+            return AgentReply(
+                message=message,
+                recording_ids=last_recording_ids,
+                sources=last_sources,
+            )
 
         for call in function_calls:
             arguments = json.loads(call.arguments)
@@ -727,7 +849,7 @@ def run_agent(request: AgentAskRequest) -> AgentReply:
                     pending_action=action,
                 )
 
-            output, recording_ids = execute_read_tool(
+            output, recording_ids, sources = execute_read_tool(
                 client,
                 call.name,
                 arguments,
@@ -736,6 +858,8 @@ def run_agent(request: AgentAskRequest) -> AgentReply:
             )
             if recording_ids:
                 last_recording_ids = recording_ids
+            if sources:
+                last_sources = sources
             input_items.append(
                 {
                     "type": "function_call_output",
@@ -758,6 +882,21 @@ def health() -> dict[str, Any]:
             "transcription": TRANSCRIPTION_MODEL,
             "embedding": EMBEDDING_MODEL,
         },
+        "rag": {
+            "framework": "LangChain",
+            "vector_store": VECTOR_STORE_PROVIDER,
+            "persistent": True,
+        },
+    }
+
+
+@app.get("/rag/status")
+def rag_status() -> dict[str, Any]:
+    rag = get_rag_service()
+    return {
+        "status": "ready",
+        "vector_store": VECTOR_STORE_PROVIDER,
+        **rag.status(),
     }
 
 

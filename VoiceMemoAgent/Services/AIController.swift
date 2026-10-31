@@ -96,6 +96,7 @@ final class AIController: ObservableObject {
                     role: .assistant,
                     text: reply.message,
                     recordingIDs: ids,
+                    sources: reply.sources,
                     pendingAction: reply.pendingAction
                 )
             )

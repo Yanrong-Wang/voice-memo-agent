@@ -145,6 +145,15 @@ final class AudioController: NSObject, ObservableObject {
             return
         }
 
+        preparePlayback(id: id, url: url, at: 0, autoplay: true)
+    }
+
+    func preparePlayback(
+        id: UUID,
+        url: URL,
+        at time: TimeInterval,
+        autoplay: Bool = false
+    ) {
         do {
             stopPlayback()
             let session = AVAudioSession.sharedInstance()
@@ -153,13 +162,16 @@ final class AudioController: NSObject, ObservableObject {
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
             player.prepareToPlay()
-            player.play()
+            player.currentTime = min(max(0, time), player.duration)
             self.player = player
             playingID = id
             playbackDuration = player.duration
-            playbackTime = 0
-            isPlaying = true
-            startPlaybackTimer()
+            playbackTime = player.currentTime
+            if autoplay {
+                player.play()
+                isPlaying = true
+                startPlaybackTimer()
+            }
         } catch {
             lastError = error.localizedDescription
         }

@@ -6,6 +6,7 @@ struct AgentRecordingContext: Codable, Sendable {
     let createdAt: Date
     let duration: TimeInterval
     let transcript: String?
+    let transcriptChunks: [TranscriptChunk]
     let summary: String?
     let keyPoints: [String]
     let actionItems: [RecordingActionItem]
@@ -15,18 +16,21 @@ struct AgentRecordingContext: Codable, Sendable {
     let category: String?
 
     init(recording: Recording) {
+        let hasCurrentAnalysis = recording.transcriptStatus == .ready
+            && recording.summaryStatus == .ready
         id = recording.id.uuidString
         title = recording.title
         createdAt = recording.createdAt
         duration = recording.duration
-        transcript = recording.transcript
-        summary = recording.summary
-        keyPoints = recording.keyPoints
-        actionItems = recording.actionItems
-        suggestedTitle = recording.suggestedTitle
-        suggestedTags = recording.suggestedTags
+        transcript = hasCurrentAnalysis ? recording.transcript : nil
+        transcriptChunks = hasCurrentAnalysis ? recording.transcriptChunks : []
+        summary = hasCurrentAnalysis ? recording.summary : nil
+        keyPoints = hasCurrentAnalysis ? recording.keyPoints : []
+        actionItems = hasCurrentAnalysis ? recording.actionItems : []
+        suggestedTitle = hasCurrentAnalysis ? recording.suggestedTitle : nil
+        suggestedTags = hasCurrentAnalysis ? recording.suggestedTags : []
         tags = recording.tags
-        category = recording.category
+        category = hasCurrentAnalysis ? recording.category : nil
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -35,6 +39,7 @@ struct AgentRecordingContext: Codable, Sendable {
         case createdAt = "created_at"
         case duration
         case transcript
+        case transcriptChunks = "transcript_chunks"
         case summary
         case keyPoints = "key_points"
         case actionItems = "action_items"
@@ -42,6 +47,26 @@ struct AgentRecordingContext: Codable, Sendable {
         case suggestedTags = "suggested_tags"
         case tags
         case category
+    }
+}
+
+struct AgentSource: Codable, Hashable, Sendable {
+    let recordingID: String
+    let recordingTitle: String
+    let chunkID: String
+    let excerpt: String
+    let startTime: TimeInterval?
+    let endTime: TimeInterval?
+    let score: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case recordingID = "recording_id"
+        case recordingTitle = "recording_title"
+        case chunkID = "chunk_id"
+        case excerpt
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case score
     }
 }
 
@@ -84,12 +109,14 @@ struct AgentPendingAction: Codable, Hashable, Sendable {
 struct AgentReply: Codable, Sendable {
     let message: String
     let recordingIDs: [String]
+    let sources: [AgentSource]
     let requiresConfirmation: Bool
     let pendingAction: AgentPendingAction?
 
     private enum CodingKeys: String, CodingKey {
         case message
         case recordingIDs = "recording_ids"
+        case sources
         case requiresConfirmation = "requires_confirmation"
         case pendingAction = "pending_action"
     }
@@ -121,5 +148,6 @@ struct AgentMessage: Identifiable, Hashable {
     let role: Role
     let text: String
     var recordingIDs: [UUID] = []
+    var sources: [AgentSource] = []
     var pendingAction: AgentPendingAction?
 }

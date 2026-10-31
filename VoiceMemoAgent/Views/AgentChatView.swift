@@ -11,6 +11,7 @@ struct AgentChatView: View {
     @State private var query = ""
     @State private var showsSettings = false
     @State private var selectedRecordingID: UUID?
+    @State private var selectedStartTime: TimeInterval?
 
     init(currentRecordingID: UUID? = nil) {
         self.currentRecordingID = currentRecordingID
@@ -52,7 +53,10 @@ struct AgentChatView: View {
             )
         ) {
             if let selectedRecordingID {
-                RecordingDetailView(recordingID: selectedRecordingID)
+                RecordingDetailView(
+                    recordingID: selectedRecordingID,
+                    initialPlaybackTime: selectedStartTime
+                )
                     .environmentObject(store)
                     .environmentObject(audio)
                     .environmentObject(ai)
@@ -132,9 +136,20 @@ struct AgentChatView: View {
                 if message.role == .assistant { Spacer(minLength: 54) }
             }
 
-            ForEach(message.recordingIDs, id: \.self) { id in
-                if let recording = store.recordings.first(where: { $0.id == id }) {
-                    recordingCard(recording)
+            if message.sources.isEmpty {
+                ForEach(message.recordingIDs, id: \.self) { id in
+                    if let recording = store.recordings.first(where: { $0.id == id }) {
+                        recordingCard(recording)
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Sources")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MemoTheme.secondary)
+                    ForEach(Array(message.sources.enumerated()), id: \.element) { index, source in
+                        sourceCard(source, label: "S\(index + 1)")
+                    }
                 }
             }
 
@@ -148,6 +163,7 @@ struct AgentChatView: View {
 
     private func recordingCard(_ recording: Recording) -> some View {
         Button {
+            selectedStartTime = nil
             selectedRecordingID = recording.id
         } label: {
             HStack(spacing: 12) {
@@ -176,6 +192,47 @@ struct AgentChatView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private func sourceCard(_ source: AgentSource, label: String) -> some View {
+        Button {
+            selectedStartTime = source.startTime
+            selectedRecordingID = UUID(uuidString: source.recordingID)
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("[\(label)] \(source.recordingTitle)")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    if let startTime = source.startTime {
+                        Text(sourceTime(startTime, source.endTime))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(MemoTheme.waveform)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(MemoTheme.secondary)
+                }
+                Text(source.excerpt)
+                    .font(.caption)
+                    .foregroundStyle(MemoTheme.secondary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(13)
+            .background(
+                RoundedRectangle(cornerRadius: 15)
+                    .fill(Color.white.opacity(0.07))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sourceTime(_ start: TimeInterval, _ end: TimeInterval?) -> String {
+        let startText = MemoFormatters.duration(start)
+        guard let end else { return "~\(startText)" }
+        return "~\(startText)-\(MemoFormatters.duration(end))"
     }
 
     private func confirmationCard(_ action: AgentPendingAction) -> some View {

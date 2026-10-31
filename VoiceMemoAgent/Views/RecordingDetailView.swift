@@ -7,6 +7,12 @@ struct RecordingDetailView: View {
     @EnvironmentObject private var ai: AIController
 
     let recordingID: UUID
+    let initialPlaybackTime: TimeInterval?
+
+    init(recordingID: UUID, initialPlaybackTime: TimeInterval? = nil) {
+        self.recordingID = recordingID
+        self.initialPlaybackTime = initialPlaybackTime
+    }
 
     @State private var showsAgent = false
     @State private var proposedTitle: String?
@@ -81,6 +87,14 @@ struct RecordingDetailView: View {
         }
         .onDisappear {
             audio.stopPlayback()
+        }
+        .task(id: initialPlaybackTime) {
+            guard let recording, let initialPlaybackTime else { return }
+            audio.preparePlayback(
+                id: recording.id,
+                url: store.audioURL(for: recording),
+                at: initialPlaybackTime
+            )
         }
     }
 

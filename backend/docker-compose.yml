@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: voice_memo
+      POSTGRES_USER: voice_memo
+      POSTGRES_PASSWORD: voice_memo
+    ports:
+      - "5432:5432"
+    volumes:
+      - voice-memo-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice_memo -d voice_memo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  voice-memo-postgres:
