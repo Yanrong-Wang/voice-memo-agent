@@ -1,117 +1,189 @@
 # AI Voice Memo Agent
 
-一个使用 SwiftUI 和 AVFoundation 构建的 iPhone 录音应用。基础交互参考
-Voice Memos，并加入录音转写、结构化摘要、带时间戳的 LangChain RAG 和可操作
-录音数据的 AI Agent。
+An iPhone voice-recording app built with SwiftUI and AVFoundation. It combines
+Voice Memos-style recording and editing with AI transcription, structured notes,
+timestamp-linked retrieval-augmented generation (RAG), and a tool-calling agent
+that can organize recordings with user approval.
 
-## 已实现功能
+## Features
 
-- 本地录音、暂停、播放、波形、快进/快退、裁剪和删除片段
-- 录音重命名、收藏、复制、分享和删除
-- 保存录音后自动触发 AI 转写和分析
-- Summary 状态与缓存：`not_started`、`processing`、`ready`、`failed`、`expired`
-- Transcript、Summary、Key Points、Action Items、建议标题和建议标签
-- LangChain + PostgreSQL/pgvector 构建的持久化、跨录音语义检索
-- 基于 transcript chunk 的 RAG 问答，回答附录音、估算时间和原文证据
-- 点击 Agent 来源卡片可打开录音并定位到相关时间
-- Responses API 工具调用 Agent
-- 多轮会话中的“第二条”“它”“这条录音”等上下文
-- Agent 重命名、加标签和删除前的人机确认
-- 编辑音频后自动将旧分析标记为 `expired`
+### Audio
 
-## 架构
+- Record, pause, resume, and play local `.m4a` audio
+- Display live and persisted waveforms
+- Seek, skip forward or backward, trim, and delete selected audio segments
+- Rename, favorite, duplicate, share, and delete recordings
+
+### AI analysis
+
+- Automatically transcribe and analyze newly saved recordings
+- Generate a short summary, detailed summary, key points, and action items
+- Suggest titles, tags, and a category
+- Cache analysis with `not_started`, `processing`, `ready`, `failed`, and
+  `expired` states
+- Invalidate stale analysis after an audio edit
+
+### RAG and agent
+
+- Split transcripts into timestamp-linked chunks with LangChain
+- Store embeddings and metadata in PostgreSQL with pgvector
+- Search semantically across multiple recordings
+- Answer questions from retrieved transcript evidence and return source cards
+- Open a cited recording near the relevant audio segment
+- Use OpenAI tool calling to search, summarize, rename, tag, and delete recordings
+- Require human confirmation before metadata changes or deletion
+- Preserve conversational references such as "the second result" or "that recording"
+
+## Architecture
 
 ```text
-iPhone SwiftUI App
-  ├─ AVFoundation: 录音、播放、编辑
-  ├─ 本地 JSON + m4a: 数据源
-  └─ URLSession
-          ↓
-Local FastAPI Service
-  ├─ Audio Transcriptions: 语音转文字
-  ├─ Structured Outputs: 摘要、要点、行动项
-  ├─ LangChain: 分块、Retriever 与 RAG 问答链
-  ├─ OpenAI Embeddings + pgvector: 持久化向量检索
-  └─ Responses API + tools: Agent 工作流
-          ↓
-OpenAI API
+iPhone SwiftUI app
+  |-- AVFoundation: recording, playback, waveform sampling, and editing
+  |-- RecordingStore: local .m4a files and JSON metadata
+  |-- AIController: analysis state and agent conversations
+  `-- URLSession: multipart audio and JSON requests
+                    |
+                    v
+FastAPI service
+  |-- OpenAI Audio Transcriptions API: speech to text
+  |-- OpenAI Responses API: structured analysis and tool calling
+  |-- LangChain: transcript splitting, retrieval, prompting, and RAG
+  |-- OpenAI Embeddings: semantic vector representations
+  `-- PostgreSQL + pgvector: persistent vector search and metadata
+                    |
+                    v
+                 OpenAI API
 ```
 
-RAG 索引默认写入 PostgreSQL + pgvector；Chroma 作为无需数据库的本地回退。
-iPhone 发送的录音列表仍是数据源，Agent 提问时后端会增量同步新增、编辑、
-重命名或删除的录音。
+The iPhone remains the source of truth for recordings and their metadata. When
+the user searches or asks the agent a question, the app sends the current
+recording context to FastAPI. The backend incrementally reconciles new, edited,
+renamed, and deleted recordings with the RAG index.
 
-OpenAI API Key 只保存在 Mac 的 `backend/.env`，不会写入或打包进 iPhone
-App。录音仍以 iPhone 本地数据为准。
+The OpenAI API key is stored only in `backend/.env`; it is never embedded in the
+iOS application.
 
-## 1. 启动 pgvector
+## Data Flow
 
-安装并打开 Docker Desktop，然后在项目根目录执行：
+### Recording analysis
+
+```text
+Local .m4a audio
+  -> multipart upload
+  -> transcription
+  -> structured summary, key points, and action items
+  -> JSON response
+  -> cached in the recording's local metadata
+```
+
+### RAG question answering
+
+```text
+Transcript chunks
+  -> embeddings
+  -> pgvector
+  -> similarity search for a user question
+  -> retrieved evidence
+  -> grounded answer with source citations
+```
+
+## Project Structure
+
+```text
+VoiceMemoAgent/
+  Models/       Recording, transcript, analysis, and agent data models
+  Services/     Audio, persistence, networking, and AI orchestration
+  Views/        SwiftUI recording, editing, summary, and agent screens
+
+backend/
+  app.py        FastAPI routes, OpenAI analysis, and agent tools
+  rag.py        LangChain retrieval and pgvector/Chroma persistence
+  tests/        Backend RAG tests
+  docker-compose.yml
+                Local PostgreSQL 16 and pgvector service
+```
+
+## Requirements
+
+- macOS with Xcode 16.4 or later
+- Python 3.9 or later
+- Docker Desktop, unless using Chroma or a managed PostgreSQL database
+- An OpenAI API key
+
+## Setup
+
+### 1. Start PostgreSQL with pgvector
+
+Install and open Docker Desktop, then run this command from the project root:
 
 ```bash
 docker compose -f backend/docker-compose.yml up -d
 ```
 
-这会启动一个仅用于本地开发的 PostgreSQL 16 + pgvector 服务，并通过
-`127.0.0.1:5432` 提供连接。数据库文件保存在 Docker named volume 中，
-容器重启后不会丢失。
+This starts PostgreSQL 16 with pgvector on `127.0.0.1:5432`. Database files are
+stored in a named Docker volume and persist across container restarts.
 
-不使用 Docker 时，也可以使用 Neon、Supabase、Railway 或其他支持 pgvector
-的 PostgreSQL，并将连接地址填写到 `POSTGRES_CONNECTION_STRING`。
+You can instead use a managed PostgreSQL provider that supports pgvector. Set
+its connection string in `POSTGRES_CONNECTION_STRING`.
 
-## 2. 配置 AI 服务
-
-在项目根目录执行：
+### 2. Configure and start FastAPI
 
 ```bash
 cp backend/.env.example backend/.env
 open -e backend/.env
 ```
 
-在文件中填写：
+Set your API key:
 
 ```text
-OPENAI_API_KEY=你的API密钥
+OPENAI_API_KEY=your_api_key
 ```
 
-然后启动服务：
+Start the backend:
 
 ```bash
 bash backend/start.sh
 ```
 
-看到 `Uvicorn running on http://0.0.0.0:8000` 即启动成功。浏览器打开
-`http://127.0.0.1:8000/docs` 可以查看 API。
+The API is available at `http://127.0.0.1:8000`. Open
+`http://127.0.0.1:8000/docs` for the generated API documentation.
 
-检查 pgvector 状态：
+Check the active vector store:
 
 ```bash
 curl http://127.0.0.1:8000/rag/status
 ```
 
-正常结果会包含 `"vector_store":"pgvector"`。如果暂时不安装 PostgreSQL，
-将 `.env` 中的 `VECTOR_STORE_PROVIDER` 改成 `chroma` 即可使用本地回退。
+A successful pgvector setup returns a response containing
+`"vector_store":"pgvector"`. To run without PostgreSQL, set
+`VECTOR_STORE_PROVIDER=chroma` in `backend/.env`.
 
-## 3. 运行 iPhone App
+### 3. Run the iOS app
 
-1. 用 Xcode 16.4 或更新版本打开 `VoiceMemoAgent.xcodeproj`。
-2. 在 Signing & Capabilities 选择你的 Team。
-3. 选择 iPhone 模拟器或真机并运行。
-4. 模拟器中的 AI Server URL 使用 `http://127.0.0.1:8000`。
-5. 真机需要与 Mac 在同一网络，并在 Agent 设置中使用 Mac 的 `.local`
-   地址，例如 `http://Amy-Mac.local:8000`。
+1. Open `VoiceMemoAgent.xcodeproj` in Xcode.
+2. Select your development team under **Signing & Capabilities**.
+3. Choose an iPhone simulator or a physical device and run the app.
+4. Use `http://127.0.0.1:8000` as the AI server URL in the simulator.
+5. For a physical iPhone, connect it to the same network as the Mac and use the
+   Mac's `.local` address, such as `http://Amy-Mac.local:8000`.
 
-Mac 主机名可以在终端查看：
+Find the Mac's local hostname with:
 
 ```bash
 scutil --get LocalHostName
 ```
 
-## 测试
+## Testing
+
+Run backend tests:
 
 ```bash
 backend/.venv/bin/python -m unittest discover backend/tests
+```
 
+Build the iOS target without code signing:
+
+```bash
 xcodebuild \
   -project VoiceMemoAgent.xcodeproj \
   -scheme VoiceMemoAgent \
@@ -121,11 +193,17 @@ xcodebuild \
   build
 ```
 
-## 数据与成本
+## Storage, Cost, and Current Limitations
 
-分析结果保存在录音 metadata 中，因此重复打开 Summary 不会重复调用模型。
-只有首次生成、失败重试或音频编辑后重新生成时才会产生新的 AI 请求。
-pgvector 保存 transcript 片段、向量和 metadata，不复制原始音频。使用本地
-Docker 时数据在 Mac 的 Docker volume；使用托管 PostgreSQL 时数据在云端数据库。
-当前时间位置根据文字在整段转写中的比例估算，并非逐词转写的精确时间戳。
-音频编辑后，过期 transcript 会从索引移除，重新分析完成后再写入新片段。
+- Audio files and recording metadata remain on the iPhone.
+- Cached analysis prevents repeated model calls when a ready summary is opened.
+- Model calls occur for initial analysis, explicit retries, and regeneration
+  after audio edits.
+- pgvector stores transcript chunks, embeddings, and metadata, but not audio.
+- Local pgvector data lives in a Docker volume; managed PostgreSQL data lives
+  with the selected provider.
+- Source timestamps are currently estimated from each chunk's relative position
+  in the transcript, not from word-level transcription timestamps.
+- The current backend is designed for a single user. A multi-user deployment
+  would require authentication, tenant isolation, persistent agent sessions,
+  HTTPS, and production secret management.

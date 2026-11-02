@@ -760,15 +760,18 @@ def prepare_pending_action(
 def confirmation_message(action: PendingAction) -> str:
     if action.type == "rename_recording":
         return (
-            f'建议将“{action.recording_title}”重命名为“{action.new_title}”。'
-            "是否确认？"
+            f'I am ready to rename "{action.recording_title}" to '
+            f'"{action.new_title}". Do you want to continue?'
         )
     if action.type == "tag_recording":
         return (
-            f'建议为“{action.recording_title}”设置标签：'
-            f'{", ".join(action.tags or [])}。是否确认？'
+            f'I am ready to add these tags to "{action.recording_title}": '
+            f'{", ".join(action.tags or [])}. Do you want to continue?'
         )
-    return f'即将删除“{action.recording_title}”。此操作不可撤销，是否确认？'
+    return (
+        f'I am ready to delete "{action.recording_title}". '
+        "This action cannot be undone. Do you want to continue?"
+    )
 
 
 def run_agent(request: AgentAskRequest) -> AgentReply:
@@ -934,11 +937,15 @@ def confirm_agent_action(request: ConfirmRequest) -> ConfirmReply:
     with _sessions_lock:
         state = _sessions.get(request.session_id)
         if state is None or state.pending_action is None:
-            return ConfirmReply(success=False, message="没有等待确认的操作。")
+            return ConfirmReply(success=False, message="There is no pending action to confirm.")
         action = state.pending_action
         state.pending_action = None
         _sessions[request.session_id] = state
 
     if not request.confirm:
-        return ConfirmReply(success=True, message="已取消操作。")
-    return ConfirmReply(success=True, message="已确认，正在应用操作。", action=action)
+        return ConfirmReply(success=True, message="The action was cancelled.")
+    return ConfirmReply(
+        success=True,
+        message="The action was confirmed and is ready to be applied.",
+        action=action,
+    )

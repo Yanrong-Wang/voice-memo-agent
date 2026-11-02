@@ -134,7 +134,16 @@ class VoiceMemoRAG:
             chunk_size=900,
             chunk_overlap=120,
             add_start_index=True,
-            separators=["\n\n", "\n", "。", "！", "？", ". ", " ", ""],
+            separators=[
+                "\n\n",
+                "\n",
+                "\u3002",
+                "\uff01",
+                "\uff1f",
+                ". ",
+                " ",
+                "",
+            ],
         )
 
     def sync_recordings(self, recordings: Sequence[RAGRecordingInput]) -> None:

@@ -7,7 +7,8 @@ final class AIController: ObservableObject {
     @Published private(set) var messages: [AgentMessage] = [
         AgentMessage(
             role: .assistant,
-            text: "可以让我搜索、总结和整理你的录音。修改标题、标签或删除前，我会先请求确认。"
+            text: "I can search, summarize, and organize your recordings. "
+                + "I will ask for confirmation before renaming, tagging, or deleting anything."
         )
     ]
     @Published private(set) var isAgentThinking = false
@@ -106,7 +107,7 @@ final class AIController: ObservableObject {
             messages.append(
                 AgentMessage(
                     role: .assistant,
-                    text: "这次没有完成：\(message)"
+                    text: "I couldn't complete that request: \(message)"
                 )
             )
         }
@@ -142,7 +143,7 @@ final class AIController: ObservableObject {
             messages.append(
                 AgentMessage(
                     role: .assistant,
-                    text: "无法确认操作：\(error.localizedDescription)"
+                    text: "I couldn't confirm the action: \(error.localizedDescription)"
                 )
             )
         }
@@ -174,11 +175,11 @@ final class AIController: ObservableObject {
     private func completionMessage(for action: AgentPendingAction) -> String {
         switch action.type {
         case .renameRecording:
-            "已重命名录音。"
+            "The recording was renamed."
         case .tagRecording:
-            "已添加标签。"
+            "The tags were added."
         case .deleteRecording:
-            "已删除录音。"
+            "The recording was deleted."
         }
     }
 }

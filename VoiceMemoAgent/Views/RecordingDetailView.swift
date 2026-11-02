@@ -280,7 +280,7 @@ struct RecordingDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(items, id: \.self) { item in
                 HStack(alignment: .top) {
-                    Text("•").foregroundStyle(MemoTheme.waveform)
+                    Text("\u{2022}").foregroundStyle(MemoTheme.waveform)
                     Text(item)
                 }
             }
