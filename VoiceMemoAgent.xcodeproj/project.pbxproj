@@ -27,6 +27,9 @@
 		A00000000000000000000012 /* SummarySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000014 /* SummarySheet.swift */; };
 		A00000000000000000000013 /* RecordingDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* RecordingDetailView.swift */; };
 		A00000000000000000000014 /* AgentChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000016 /* AgentChatView.swift */; };
+		A00000000000000000000015 /* ai-engineer-interview-review.m4a in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000017 /* ai-engineer-interview-review.m4a */; };
+		A00000000000000000000016 /* product-sync-notes.m4a in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000018 /* product-sync-notes.m4a */; };
+		A00000000000000000000017 /* react-native-migration.m4a in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000019 /* react-native-migration.m4a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +55,9 @@
 		B00000000000000000000014 /* SummarySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummarySheet.swift; sourceTree = "<group>"; };
 		B00000000000000000000015 /* RecordingDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingDetailView.swift; sourceTree = "<group>"; };
 		B00000000000000000000016 /* AgentChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatView.swift; sourceTree = "<group>"; };
+		B00000000000000000000017 /* ai-engineer-interview-review.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "ai-engineer-interview-review.m4a"; sourceTree = "<group>"; };
+		B00000000000000000000018 /* product-sync-notes.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "product-sync-notes.m4a"; sourceTree = "<group>"; };
+		B00000000000000000000019 /* react-native-migration.m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "react-native-migration.m4a"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +88,7 @@
 				D00000000000000000000005 /* Views */,
 				D00000000000000000000006 /* Utilities */,
 				D00000000000000000000007 /* Theme */,
+				D00000000000000000000009 /* Resources */,
 				B0000000000000000000000F /* Info.plist */,
 			);
 			path = VoiceMemoAgent;
@@ -149,6 +156,24 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		D00000000000000000000009 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				D0000000000000000000000A /* DemoAudio */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		D0000000000000000000000A /* DemoAudio */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000017 /* ai-engineer-interview-review.m4a */,
+				B00000000000000000000018 /* product-sync-notes.m4a */,
+				B00000000000000000000019 /* react-native-migration.m4a */,
+			);
+			path = DemoAudio;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -207,6 +232,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A00000000000000000000015 /* ai-engineer-interview-review.m4a in Resources */,
+				A00000000000000000000016 /* product-sync-notes.m4a in Resources */,
+				A00000000000000000000017 /* react-native-migration.m4a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

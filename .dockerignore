@@ -1,0 +1,9 @@
+.git
+.DS_Store
+DerivedData
+backend/.env
+backend/.venv
+backend/__pycache__
+backend/data
+**/__pycache__
+**/*.pyc

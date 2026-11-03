@@ -2,16 +2,37 @@ import Foundation
 
 enum AIConfiguration {
     static let serverURLKey = "ai.serverURL"
+    static let apiTokenKey = "ai.apiToken"
     static let defaultServerURL = "http://127.0.0.1:8000"
 
     static var serverURLString: String {
         UserDefaults.standard.string(forKey: serverURLKey) ?? defaultServerURL
+    }
+
+    static var apiToken: String? {
+        let value = UserDefaults.standard.string(forKey: apiTokenKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
     }
 }
 
 struct AIAPIClient: RecordingIntelligenceProviding, Sendable {
     private struct ServerError: Decodable {
         let detail: String
+    }
+
+    private struct AnalysisJobSubmission: Decodable {
+        let jobID: String
+
+        private enum CodingKeys: String, CodingKey {
+            case jobID = "job_id"
+        }
+    }
+
+    private struct AnalysisJobStatus: Decodable {
+        let status: String
+        let result: RecordingInsights?
+        let error: String?
     }
 
     private let session: URLSession
@@ -26,12 +47,12 @@ struct AIAPIClient: RecordingIntelligenceProviding, Sendable {
         forceRegenerate: Bool
     ) async throws -> RecordingInsights {
         let endpoint = try makeURL(
-            path: "/recordings/\(recording.id.uuidString)/analyze"
+            path: "/recordings/\(recording.id.uuidString)/analysis-jobs"
         )
         let boundary = "VoiceMemoBoundary-\(UUID().uuidString)"
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 180
+        request.timeoutInterval = 60
         request.setValue(
             "multipart/form-data; boundary=\(boundary)",
             forHTTPHeaderField: "Content-Type"
@@ -44,7 +65,26 @@ struct AIAPIClient: RecordingIntelligenceProviding, Sendable {
         )
 
         let data = try await perform(request)
-        return try decoder.decode(RecordingInsights.self, from: data)
+        let submission = try decoder.decode(AnalysisJobSubmission.self, from: data)
+
+        for _ in 0..<300 {
+            try await Task.sleep(for: .seconds(1))
+            var statusRequest = URLRequest(
+                url: try makeURL(path: "/analysis-jobs/\(submission.jobID)")
+            )
+            statusRequest.timeoutInterval = 15
+            let statusData = try await perform(statusRequest)
+            let job = try decoder.decode(AnalysisJobStatus.self, from: statusData)
+            if job.status == "finished", let result = job.result {
+                return result
+            }
+            if ["failed", "stopped", "canceled"].contains(job.status) {
+                throw IntelligenceError.server(
+                    message: job.error ?? "Audio analysis failed."
+                )
+            }
+        }
+        throw IntelligenceError.server(message: "Audio analysis timed out.")
     }
 
     func ask(_ requestBody: AgentAskRequest) async throws -> AgentReply {
@@ -76,7 +116,11 @@ struct AIAPIClient: RecordingIntelligenceProviding, Sendable {
         return try decoder.decode(Response.self, from: data)
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    private func perform(_ originalRequest: URLRequest) async throws -> Data {
+        var request = originalRequest
+        if let token = AIConfiguration.apiToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {

@@ -8,7 +8,7 @@ if [[ ! -x ".venv/bin/python" ]]; then
   .venv/bin/python -m pip install -r requirements.txt
 fi
 
-if ! .venv/bin/python -c 'import langchain_chroma, langchain_openai, langchain_postgres' 2>/dev/null; then
+if ! .venv/bin/python -c 'import jwt, langchain_chroma, langchain_openai, langchain_postgres, redis, rq' 2>/dev/null; then
   .venv/bin/python -m pip install -r requirements.txt
 fi
 
@@ -44,6 +44,21 @@ PY
     echo "pgvector is unavailable. Start it with:"
     echo "docker compose -f docker-compose.yml up -d"
     echo "Or check POSTGRES_CONNECTION_STRING in backend/.env."
+    exit 1
+  fi
+fi
+
+if grep -q '^ANALYSIS_QUEUE_ENABLED=true' .env; then
+  if ! .venv/bin/python - <<'PY'
+from dotenv import dotenv_values
+from redis import Redis
+
+settings = dotenv_values(".env")
+Redis.from_url(settings.get("REDIS_URL", "redis://127.0.0.1:6380/0")).ping()
+PY
+  then
+    echo "Redis is unavailable. Start PostgreSQL, Redis, and the worker with:"
+    echo "docker compose -f docker-compose.yml up -d"
     exit 1
   fi
 fi

@@ -38,12 +38,14 @@ struct TranscriptChunk: Identifiable, Codable, Hashable, Sendable {
     var text: String
     var startTime: TimeInterval?
     var endTime: TimeInterval?
+    var timingSource: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id
         case text
         case startTime = "start_time"
         case endTime = "end_time"
+        case timingSource = "timing_source"
     }
 }
 

@@ -100,7 +100,18 @@ struct AgentChatView: View {
 
     @ViewBuilder
     private var serverStatus: some View {
-        if ai.isServerAvailable == false {
+        if ai.isUsingLocalDemo {
+            Label(
+                "Local Demo Mode: source-linked search uses the bundled transcripts.",
+                systemImage: "laptopcomputer.and.iphone"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(MemoTheme.waveform)
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .background(MemoTheme.waveform.opacity(0.12))
+            .padding(.horizontal, 18)
+        } else if ai.isServerAvailable == false {
             Button {
                 showsSettings = true
             } label: {

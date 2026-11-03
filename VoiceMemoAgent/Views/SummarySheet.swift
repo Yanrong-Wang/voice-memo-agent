@@ -163,6 +163,22 @@ struct SummarySheet: View {
                         .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
+
+                Button {
+                    Task {
+                        await ai.analyze(
+                            recordingID: recordingID,
+                            in: store,
+                            forceRegenerate: true
+                        )
+                    }
+                } label: {
+                    Label("Regenerate from Audio", systemImage: "arrow.clockwise")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
             }
             .padding(20)
         }

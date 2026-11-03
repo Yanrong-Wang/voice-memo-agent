@@ -27,12 +27,14 @@ that can organize recordings with user approval.
 
 - Split transcripts into timestamp-linked chunks with LangChain
 - Store embeddings and metadata in PostgreSQL with pgvector
-- Search semantically across multiple recordings
+- Combine semantic vector retrieval, full-text search, and answer-aware reranking
 - Answer questions from retrieved transcript evidence and return source cards
 - Open a cited recording near the relevant audio segment
 - Use OpenAI tool calling to search, summarize, rename, tag, and delete recordings
 - Require human confirmation before metadata changes or deletion
 - Preserve conversational references such as "the second result" or "that recording"
+- Persist Agent sessions and pending confirmations across backend restarts
+- Isolate RAG indexes and Agent sessions by authenticated user identity
 
 ## Architecture
 
@@ -47,9 +49,10 @@ iPhone SwiftUI app
 FastAPI service
   |-- OpenAI Audio Transcriptions API: speech to text
   |-- OpenAI Responses API: structured analysis and tool calling
-  |-- LangChain: transcript splitting, retrieval, prompting, and RAG
+  |-- LangChain: splitting, hybrid retrieval, reranking, and grounded Q&A
   |-- OpenAI Embeddings: semantic vector representations
-  `-- PostgreSQL + pgvector: persistent vector search and metadata
+  |-- PostgreSQL + pgvector: vectors, full-text search, and Agent sessions
+  `-- Redis + RQ worker: durable asynchronous audio analysis
                     |
                     v
                  OpenAI API
@@ -70,7 +73,8 @@ iOS application.
 ```text
 Local .m4a audio
   -> multipart upload
-  -> transcription
+  -> Redis/RQ background job
+  -> transcription plus word-timestamp alignment
   -> structured summary, key points, and action items
   -> JSON response
   -> cached in the recording's local metadata
@@ -81,8 +85,8 @@ Local .m4a audio
 ```text
 Transcript chunks
   -> embeddings
-  -> pgvector
-  -> similarity search for a user question
+  -> pgvector plus PostgreSQL full-text index
+  -> hybrid retrieval and answer-aware reranking
   -> retrieved evidence
   -> grounded answer with source citations
 ```
@@ -120,8 +124,9 @@ Install and open Docker Desktop, then run this command from the project root:
 docker compose -f backend/docker-compose.yml up -d
 ```
 
-This starts PostgreSQL 16 with pgvector on `127.0.0.1:5432`. Database files are
-stored in a named Docker volume and persist across container restarts.
+This starts PostgreSQL 16 with pgvector on `127.0.0.1:5432`, Redis on
+`127.0.0.1:6380`, and the RQ analysis worker. Database and queue data live in
+named Docker volumes and persist across container restarts.
 
 You can instead use a managed PostgreSQL provider that supports pgvector. Set
 its connection string in `POSTGRES_CONNECTION_STRING`.
@@ -173,6 +178,20 @@ Find the Mac's local hostname with:
 scutil --get LocalHostName
 ```
 
+### Simulator demo mode
+
+A Debug build running in the iOS Simulator seeds three playable recordings the
+first time its local document store is empty. The demo recordings include
+transcripts, timestamped chunks, summaries, key points, action items, tags, and
+categories. They are not added to Release builds or physical devices.
+
+When the FastAPI server is unavailable, the Debug Simulator also exposes a
+clearly labeled Local Demo Mode in Memo Agent. It supports transcript search,
+source cards, and timestamp navigation using the bundled sample data. This mode
+does not call or imitate an OpenAI model. Start FastAPI and configure
+`OPENAI_API_KEY` to exercise the real LangChain, pgvector, embeddings, and
+Responses API path.
+
 ## Testing
 
 Run backend tests:
@@ -202,8 +221,12 @@ xcodebuild \
 - pgvector stores transcript chunks, embeddings, and metadata, but not audio.
 - Local pgvector data lives in a Docker volume; managed PostgreSQL data lives
   with the selected provider.
-- Source timestamps are currently estimated from each chunk's relative position
-  in the transcript, not from word-level transcription timestamps.
-- The current backend is designed for a single user. A multi-user deployment
-  would require authentication, tenant isolation, persistent agent sessions,
-  HTTPS, and production secret management.
+- When `OPENAI_TIMESTAMP_MODEL` is configured, transcript text is aligned to
+  provider word timings; low-confidence alignment falls back to timestamps
+  explicitly marked `estimated`.
+- JWT verification, per-user RAG namespaces, persistent Agent sessions, rate
+  limiting, and metrics are implemented. Public deployment still requires an
+  actual identity provider, HTTPS, managed secrets, backups, and alerting.
+- The current word-timestamp provider is transitional because `whisper-1` has
+  an announced shutdown date; replace it with a maintained provider or local
+  forced aligner before long-term production deployment.
